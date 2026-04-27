@@ -42,15 +42,6 @@ EXPERIENCES = ["", "0-2", "3-5", "6+"]
 # ── Sort helper ───────────────────────────────────────────────────────────────
 
 def sort_candidates(candidates: list) -> list:
-    """
-    Sort order (top → bottom):
-      1. Active + interview scheduled  (interview_date set)
-      2. Active  (no interview yet)
-      3. Reviewing
-      4. Hired
-      5. Rejected
-    Within each group, preserve DB order (most recently added first).
-    """
     STATUS_RANK = {"Active": 0, "Reviewing": 1, "Hired": 2, "Rejected": 3}
 
     def _key(c):
@@ -58,13 +49,12 @@ def sort_candidates(candidates: list) -> list:
             c.get("interview_date") or c.get("interview_datetime")
         )
         status = c.get("status", "Reviewing")
-        # Active+scheduled → rank 0, Active only → rank 1, others by STATUS_RANK+1
         if status == "Active" and has_interview:
             group = 0
         elif status == "Active":
             group = 1
         else:
-            group = STATUS_RANK.get(status, 9) + 2   # 3=Reviewing, 4=Hired, 5=Rejected
+            group = STATUS_RANK.get(status, 9) + 2
         return group
 
     return sorted(candidates, key=_key)
@@ -204,11 +194,12 @@ class CVForm(ctk.CTkToplevel):
 # ── Candidate Card ────────────────────────────────────────────────────────────
 
 class CandidateCard(ctk.CTkFrame):
-    def __init__(self, parent, candidate: dict, on_refresh, **kw):
+    def __init__(self, parent, candidate: dict, on_refresh, on_open_detail, **kw):
         super().__init__(parent, fg_color=CARD_BG, border_color=CARD_BORDER,
                          border_width=1, corner_radius=12, **kw)
-        self.candidate  = candidate
-        self.on_refresh = on_refresh
+        self.candidate      = candidate
+        self.on_refresh     = on_refresh
+        self.on_open_detail = on_open_detail
         self._build()
 
     def _build(self):
@@ -216,7 +207,6 @@ class CandidateCard(ctk.CTkFrame):
         status = c.get("status", "Reviewing")
         bg_col, fg_col = STATUS_COLORS.get(status, ("#1e293b", "#94a3b8"))
 
-        # ── Interview-scheduled banner (shown at very top of card) ────────────
         has_interview = bool(
             c.get("interview_date") or c.get("interview_datetime")
         )
@@ -225,12 +215,8 @@ class CandidateCard(ctk.CTkFrame):
                                   height=28)
             banner.pack(fill="x")
             banner.pack_propagate(False)
-
-            # Pulsing dot  (static green circle label)
             ctk.CTkLabel(banner, text="●", font=(None, 10),
                          text_color="#4ade80").pack(side="left", padx=(10, 4))
-
-            # Date/time text
             interview_val = c.get("interview_date") or c.get("interview_datetime", "")
             date_str = str(interview_val)[:16] if interview_val else ""
             ctk.CTkLabel(banner,
@@ -238,13 +224,10 @@ class CandidateCard(ctk.CTkFrame):
                          font=(None, 11, "bold"),
                          text_color="#4ade80").pack(side="left")
 
-        # ── Top row: initials + name + status badge ───────────────────────────
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.pack(fill="x", padx=14, pady=(12, 0))
 
         initials = "".join(w[0].upper() for w in c["full_name"].split()[:2])
-
-        # Avatar tinted green if interview scheduled
         av_color = "#0f2d1a" if (has_interview and status == "Active") else "#1e3a5f"
         av_text  = "#4ade80" if (has_interview and status == "Active") else "#60a5fa"
         av = ctk.CTkFrame(top, width=42, height=42, corner_radius=21,
@@ -264,7 +247,6 @@ class CandidateCard(ctk.CTkFrame):
                              corner_radius=10, padx=8, pady=2)
         badge.pack(side="right", anchor="ne")
 
-        # ── Meta info ─────────────────────────────────────────────────────────
         meta = ctk.CTkFrame(self, fg_color="transparent")
         meta.pack(fill="x", padx=14, pady=(8, 0))
         for val, ico in [
@@ -279,7 +261,6 @@ class CandidateCard(ctk.CTkFrame):
                 make_label(row, ico + "  " + val, size=12,
                            color=TEXT_MUTED).pack(side="left")
 
-        # ── Interview date/time line (if scheduled) ───────────────────────────
         if has_interview and status == "Active":
             iv_date = c.get("interview_date") or c.get("interview_datetime", "")
             iv_time = c.get("interview_time", "")
@@ -294,7 +275,6 @@ class CandidateCard(ctk.CTkFrame):
                 make_label(iv_row, "📅  " + "  ·  ".join(parts),
                            size=12, color="#4ade80").pack(side="left")
 
-        # ── Skills tags ───────────────────────────────────────────────────────
         skills_raw = c.get("skills", "")
         if skills_raw:
             tags_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -307,19 +287,19 @@ class CandidateCard(ctk.CTkFrame):
                                  corner_radius=8, padx=7, pady=2).pack(
                                      side="left", padx=(0, 4))
 
-        # ── Notes preview ─────────────────────────────────────────────────────
         notes = c.get("notes", "")
         if notes:
             preview = notes[:90] + ("..." if len(notes) > 90 else "")
             make_label(self, preview, size=11, color=TEXT_DIM,
                        wraplength=280).pack(anchor="w", padx=14, pady=(6, 0))
 
-        # ── Action buttons ────────────────────────────────────────────────────
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(fill="x", padx=14, pady=(10, 14))
 
+        make_btn(btn_row, "View",   self._open_detail, width=80,
+                 color=ACCENT, hover=ACCENT_HOVER).pack(side="left")
         make_btn(btn_row, "Edit",   self._edit,   width=80,
-                 color="#1e293b", hover="#252d3d").pack(side="left")
+                 color="#1e293b", hover="#252d3d").pack(side="left", padx=(6, 0))
         make_btn(btn_row, "Delete", self._delete, width=80,
                  color="#450a0a", hover="#7f1d1d").pack(side="right")
 
@@ -328,7 +308,7 @@ class CandidateCard(ctk.CTkFrame):
             make_label(btn_row, date_str, size=11, color=TEXT_DIM).pack(
                 side="left", padx=8)
 
-        # ── Make whole card clickable ─────────────────────────────────────────
+        # Make whole card clickable (opens detail)
         self.bind("<Button-1>", lambda e: self._open_detail())
         for child in self.winfo_children():
             child.bind("<Button-1>", lambda e: self._open_detail())
@@ -336,8 +316,7 @@ class CandidateCard(ctk.CTkFrame):
                 grandchild.bind("<Button-1>", lambda e: self._open_detail())
 
     def _open_detail(self):
-        CandidateDetailPanel(
-            self.winfo_toplevel(), self.candidate, self.on_refresh)
+        self.on_open_detail(self.candidate)
 
     def _edit(self):
         CVForm(self.winfo_toplevel(), self.on_refresh, self.candidate)
@@ -401,7 +380,7 @@ class App(ctk.CTk):
         make_label(self.sidebar, "OVERVIEW", size=10, weight="bold",
                    color=TEXT_DIM).pack(anchor="w", padx=20, pady=(0, 6))
         self.stat_total      = self._stat_row("Total CVs",    "0")
-        self.stat_scheduled  = self._stat_row("Interviews 📅", "0")   # ← NEW
+        self.stat_scheduled  = self._stat_row("Interviews 📅", "0")
         self.stat_reviewing  = self._stat_row("Reviewing",     "0")
         self.stat_active     = self._stat_row("Active",        "0")
         self.stat_hired      = self._stat_row("Hired",         "0")
@@ -410,7 +389,6 @@ class App(ctk.CTk):
         ctk.CTkFrame(self.sidebar, height=1, fg_color=CARD_BORDER).pack(
             fill="x", padx=20, pady=(14, 10))
 
-        # Skills filter
         make_label(self.sidebar, "FILTER BY SKILL", size=10, weight="bold",
                    color=TEXT_DIM).pack(anchor="w", padx=20, pady=(0, 6))
 
@@ -447,11 +425,25 @@ class App(ctk.CTk):
         self.filter_exp.configure(command=lambda _: self.refresh())
         self.filter_exp.pack(padx=20, pady=(0, 12))
 
-        # ── Main area ─────────────────────────────────────────────────────────
-        main = ctk.CTkFrame(self, fg_color=DARK_BG, corner_radius=0)
-        main.pack(side="right", fill="both", expand=True)
+        # ── Main content area (holds dashboard OR detail view) ────────────────
+        self.main_container = ctk.CTkFrame(self, fg_color=DARK_BG, corner_radius=0)
+        self.main_container.pack(side="right", fill="both", expand=True)
 
-        topbar = ctk.CTkFrame(main, fg_color=DARK_BG)
+        # Build the dashboard frame (persistent)
+        self._build_dashboard()
+
+        # Detail frame placeholder (built on demand)
+        self._detail_frame = None
+
+        self._skill_vars: dict[str, ctk.BooleanVar] = {}
+
+    def _build_dashboard(self):
+        """Build the dashboard panel (search bar + card grid)."""
+        self._dashboard_frame = ctk.CTkFrame(self.main_container,
+                                             fg_color=DARK_BG, corner_radius=0)
+        self._dashboard_frame.pack(fill="both", expand=True)
+
+        topbar = ctk.CTkFrame(self._dashboard_frame, fg_color=DARK_BG)
         topbar.pack(fill="x", padx=20, pady=(20, 0))
 
         self.search_var = ctk.StringVar()
@@ -474,10 +466,73 @@ class App(ctk.CTk):
         self.count_label = make_label(topbar, "", size=12, color=TEXT_DIM)
         self.count_label.pack(side="right")
 
-        self.scroll_frame = ctk.CTkScrollableFrame(main, fg_color=DARK_BG)
+        self.scroll_frame = ctk.CTkScrollableFrame(self._dashboard_frame,
+                                                   fg_color=DARK_BG)
         self.scroll_frame.pack(fill="both", expand=True, padx=20, pady=16)
 
-        self._skill_vars: dict[str, ctk.BooleanVar] = {}
+    def show_detail(self, candidate: dict):
+        """Hide dashboard, show candidate detail panel inside main window."""
+        # Hide dashboard
+        self._dashboard_frame.pack_forget()
+
+        # Destroy previous detail frame if any
+        if self._detail_frame is not None:
+            self._detail_frame.destroy()
+
+        # Wrapper frame with back button header
+        self._detail_frame = ctk.CTkFrame(self.main_container,
+                                          fg_color=DARK_BG, corner_radius=0)
+        self._detail_frame.pack(fill="both", expand=True)
+
+        # ── Back navigation bar ───────────────────────────────────────────────
+        nav = ctk.CTkFrame(self._detail_frame, fg_color=CARD_BG,
+                           corner_radius=0, height=52)
+        nav.pack(fill="x")
+        nav.pack_propagate(False)
+
+        make_btn(nav, "← Back to Dashboard",
+                 self.show_dashboard,
+                 width=180, color="transparent",
+                 hover=CARD_BORDER).pack(side="left", padx=16, pady=10)
+
+        # Breadcrumb
+        make_label(nav, "Dashboard", size=12, color=TEXT_DIM).pack(
+            side="left", pady=10)
+        make_label(nav, "  /  ", size=12, color=TEXT_DIM).pack(
+            side="left", pady=10)
+        make_label(nav, candidate["full_name"], size=12,
+                   color=TEXT_PRIMARY, weight="bold").pack(side="left", pady=10)
+
+        # ── Embed the detail panel (now a CTkFrame, not CTkToplevel) ──────────
+        detail = CandidateDetailPanel(
+            self._detail_frame,
+            candidate,
+            refresh=self._refresh_and_back_if_needed,
+            go_back=self.show_dashboard,
+        )
+        detail.pack(fill="both", expand=True)
+
+    def show_dashboard(self):
+        """Hide detail panel, show dashboard again."""
+        if self._detail_frame is not None:
+            self._detail_frame.destroy()
+            self._detail_frame = None
+
+        self._dashboard_frame.pack(fill="both", expand=True)
+        self.refresh()
+
+    def _refresh_and_back_if_needed(self):
+        """Called by detail panel when it needs a data refresh."""
+        # Stay on detail — just refresh sidebar stats quietly
+        try:
+            stats = db.get_stats()
+            self.stat_total.configure(text=str(stats["total"]))
+            self.stat_reviewing.configure(text=str(stats.get("Reviewing", 0)))
+            self.stat_active.configure(text=str(stats.get("Active", 0)))
+            self.stat_hired.configure(text=str(stats.get("Hired", 0)))
+            self.stat_rejected.configure(text=str(stats.get("Rejected", 0)))
+        except Exception:
+            pass
 
     def _stat_row(self, label, value):
         row = ctk.CTkFrame(self.sidebar, fg_color="transparent")
@@ -592,13 +647,11 @@ class App(ctk.CTk):
             messagebox.showerror("Database error", str(e))
             return
 
-        # ── Sort: interview-scheduled Active first ────────────────────────────
         candidates = sort_candidates(candidates)
 
         self._render_skill_list()
         self._render_active_tags()
 
-        # ── Sidebar stats ─────────────────────────────────────────────────────
         scheduled_count = sum(
             1 for c in candidates
             if c.get("status") == "Active" and
@@ -611,7 +664,6 @@ class App(ctk.CTk):
         self.stat_hired.configure(text=str(stats.get("Hired", 0)))
         self.stat_rejected.configure(text=str(stats.get("Rejected", 0)))
 
-        # ── Result count label ────────────────────────────────────────────────
         active_filters = []
         if search:               active_filters.append(f'"{search}"')
         if status:               active_filters.append(status)
@@ -626,7 +678,6 @@ class App(ctk.CTk):
             summary += f"  ·  {scheduled_count} interview{'s' if scheduled_count != 1 else ''} scheduled"
         self.count_label.configure(text=summary)
 
-        # ── Clear + rebuild grid ──────────────────────────────────────────────
         for w in self.scroll_frame.winfo_children():
             w.destroy()
 
@@ -636,7 +687,6 @@ class App(ctk.CTk):
             make_label(self.scroll_frame, msg, size=14, color=TEXT_DIM).pack(pady=60)
             return
 
-        # ── Section divider before non-scheduled cards ────────────────────────
         scheduled   = [c for c in candidates
                        if c.get("status") == "Active"
                        and (c.get("interview_date") or c.get("interview_datetime"))]
@@ -646,7 +696,6 @@ class App(ctk.CTk):
         row_idx = 0
 
         if scheduled:
-            # "Interview Scheduled" section label
             sec = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
             sec.grid(row=row_idx, column=0, columnspan=cols,
                      sticky="w", padx=8, pady=(4, 2))
@@ -657,14 +706,15 @@ class App(ctk.CTk):
             row_idx += 1
 
             for i, c in enumerate(scheduled):
-                card = CandidateCard(self.scroll_frame, c, self.refresh)
+                card = CandidateCard(self.scroll_frame, c,
+                                     on_refresh=self.refresh,
+                                     on_open_detail=self.show_detail)
                 card.grid(row=row_idx + i // cols, column=i % cols,
                           padx=8, pady=6, sticky="nsew")
             row_idx += (len(scheduled) + cols - 1) // cols
 
         if unscheduled:
             if scheduled:
-                # Separator row
                 sep = ctk.CTkFrame(self.scroll_frame, height=1,
                                    fg_color=CARD_BORDER)
                 sep.grid(row=row_idx, column=0, columnspan=cols,
@@ -681,7 +731,9 @@ class App(ctk.CTk):
             row_idx += 1
 
             for i, c in enumerate(unscheduled):
-                card = CandidateCard(self.scroll_frame, c, self.refresh)
+                card = CandidateCard(self.scroll_frame, c,
+                                     on_refresh=self.refresh,
+                                     on_open_detail=self.show_detail)
                 card.grid(row=row_idx + i // cols, column=i % cols,
                           padx=8, pady=6, sticky="nsew")
 
